@@ -23,7 +23,15 @@ export async function buildApp(options: AppOptions = {}) {
   const analytics = new AnalyticsService(database);
   const ingestion = new IngestionService(database, options.dataRoot ?? DEFAULT_DATA_ROOT);
 
-  await app.register(cors, { origin: ['http://localhost:5173', `http://localhost:${process.env.PORT ?? 3001}`] });
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      if (!origin || /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Not allowed'), false);
+      }
+    },
+  });
 
   if (options.autoScan !== false) {
     ingestion.scan();

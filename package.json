@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "tsx watch server/src/index.ts",
-    "dev:web": "node scripts/wait-for-port.mjs 3001 && vite",
+    "dev:web": "node scripts/wait-for-port.mjs && vite",
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",

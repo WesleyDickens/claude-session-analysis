@@ -1,14 +1,35 @@
+import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 
-const port = Number(process.argv[2] ?? 3001);
-const host = process.argv[3] ?? '127.0.0.1';
-const timeoutMs = Number(process.argv[4] ?? 60_000);
+const PORT_FILE = path.join(process.cwd(), '.data', '.port');
+const timeoutMs = Number(process.argv[2] ?? 60_000);
 const intervalMs = 250;
 const startedAt = Date.now();
 
+function readPort() {
+  try {
+    return Number(fs.readFileSync(PORT_FILE, 'utf-8').trim());
+  } catch {
+    return null;
+  }
+}
+
 function waitForPort() {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host, port });
+    const port = readPort();
+    if (!port) {
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error(`Timed out waiting for server to write port file`));
+        return;
+      }
+      setTimeout(() => {
+        waitForPort().then(resolve).catch(reject);
+      }, intervalMs);
+      return;
+    }
+
+    const socket = net.createConnection({ host: '127.0.0.1', port });
 
     socket.once('connect', () => {
       socket.end();
@@ -18,7 +39,7 @@ function waitForPort() {
     socket.once('error', () => {
       socket.destroy();
       if (Date.now() - startedAt >= timeoutMs) {
-        reject(new Error(`Timed out waiting for ${host}:${port}`));
+        reject(new Error(`Timed out waiting for 127.0.0.1:${port}`));
         return;
       }
       setTimeout(() => {
