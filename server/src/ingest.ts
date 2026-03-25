@@ -54,7 +54,7 @@ export class IngestionService {
         changed = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        summary.errors.push(`${target.filePath}: ${message}`);
+        summary.errors.push(`${path.basename(target.filePath)}: ${message}`);
       }
     }
 
