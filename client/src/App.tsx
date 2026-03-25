@@ -948,6 +948,8 @@ function SessionDetailPage() {
   const selectedTokenOptions = TOKEN_TYPE_OPTIONS.filter((option) => selectedTokenTypes.includes(option.key));
   const detailTimeGranularity = normalizeDetailTimeGranularity(searchParams.get('detailTimeGranularity'));
   const detailTimeGranularityLabel = describeDetailTimeGranularity(detailTimeGranularity);
+  const dateFrom = searchParams.get('dateFrom') ?? undefined;
+  const dateTo = searchParams.get('dateTo') ?? undefined;
   const [detail, setDetail] = useState<SessionDetailPayload | null>(null);
   const [requests, setRequests] = useState<RequestSummary[] | null>(null);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
@@ -975,7 +977,7 @@ function SessionDetailPage() {
   useEffect(() => {
     let active = true;
     api
-      .getSessionRequests(sessionId, tokenMode)
+      .getSessionRequests(sessionId, tokenMode, dateFrom, dateTo)
       .then((response) => {
         if (active) {
           setRequests(response.items);
@@ -989,13 +991,13 @@ function SessionDetailPage() {
     return () => {
       active = false;
     };
-  }, [sessionId, tokenMode]);
+  }, [sessionId, tokenMode, dateFrom, dateTo]);
 
   function toggleExpanded(requestId: string) {
     setExpandedIds((current) => (current.includes(requestId) ? current.filter((value) => value !== requestId) : [...current, requestId]));
   }
 
-  function updateDetailParams(next: Partial<{ tokenMode: TokenMode; tokenTypes: TokenTypeKey[]; detailTimeGranularity: DetailTimeGranularity }>) {
+  function updateDetailParams(next: Partial<{ tokenMode: TokenMode; tokenTypes: TokenTypeKey[]; detailTimeGranularity: DetailTimeGranularity; dateFrom: string; dateTo: string }>) {
     const mergedTokenMode = next.tokenMode ?? tokenMode;
     const mergedTokenTypes = normalizeTokenTypes(next.tokenTypes ?? selectedTokenTypes);
     const mergedDetailTimeGranularity = next.detailTimeGranularity ?? detailTimeGranularity;
@@ -1011,6 +1013,20 @@ function SessionDetailPage() {
       params.set('detailTimeGranularity', mergedDetailTimeGranularity);
     } else {
       params.delete('detailTimeGranularity');
+    }
+    if ('dateFrom' in next) {
+      if (next.dateFrom) {
+        params.set('dateFrom', next.dateFrom);
+      } else {
+        params.delete('dateFrom');
+      }
+    }
+    if ('dateTo' in next) {
+      if (next.dateTo) {
+        params.set('dateTo', next.dateTo);
+      } else {
+        params.delete('dateTo');
+      }
     }
 
     setSearchParams(params, { replace: true });
@@ -1081,6 +1097,25 @@ function SessionDetailPage() {
           </div>
         </div>
       </header>
+
+      <div className="detail-date-filters motion-rise delay-1">
+        <label className="field">
+          <span>Date from</span>
+          <input
+            type="date"
+            value={dateFrom ?? ''}
+            onChange={(event) => updateDetailParams({ dateFrom: event.target.value || undefined })}
+          />
+        </label>
+        <label className="field">
+          <span>Date to</span>
+          <input
+            type="date"
+            value={dateTo ?? ''}
+            onChange={(event) => updateDetailParams({ dateTo: event.target.value || undefined })}
+          />
+        </label>
+      </div>
 
       {error ? <div className="error-banner">{error}</div> : null}
 

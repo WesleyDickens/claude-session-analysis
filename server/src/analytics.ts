@@ -112,24 +112,46 @@ export class AnalyticsService {
     const timeGranularity = normalizeTimeGranularity(query.timeGranularity);
     const sessions = this.filterSessions(query);
     const sessionIds = sessions.map((session) => session.sessionId);
-    const requests = this.getRequestsForSessions(sessionIds, tokenMode);
-    const toolUsage = this.getToolUsageForSessions(sessionIds, tokenMode);
+    const allRequests = this.getRequestsForSessions(sessionIds, tokenMode);
+    const allToolUsage = this.getToolUsageForSessions(sessionIds, tokenMode);
     const breakdownForSession = (session: SessionSummary) =>
       tokenMode === 'rolled_up' ? session.tokenBreakdownRolledUp : session.tokenBreakdownTopLevel;
 
-    const kpis = {
-      totalInputTokens: sum(sessions.map((session) => breakdownForSession(session).inputTokens)),
-      totalOutputTokens: sum(sessions.map((session) => breakdownForSession(session).outputTokens)),
-      totalCacheCreationTokens: sum(sessions.map((session) => breakdownForSession(session).cacheCreationTokens)),
-      totalCacheReadTokens: sum(sessions.map((session) => breakdownForSession(session).cacheReadTokens)),
-      totalRequests: requests.length,
-      totalUserMessages: sum(sessions.map((session) => session.userMessageCount)),
-      totalAssistantTurns: sum(sessions.map((session) => session.assistantRequestCount)),
-      uniqueTools: new Set(toolUsage.map((row) => row.toolName)).size,
-      totalSessions: sessions.length,
-      medianSessionCost: median(sessions.map((session) => totalForTokenTypes(breakdownForSession(session), selectedTokenTypes))),
-      medianSessionDuration: median(sessions.map((session) => session.durationSec)),
-    };
+    const hasDateFilter = Boolean(query.dateFrom || query.dateTo);
+    const requests = hasDateFilter
+      ? allRequests.filter((r) => inDateRange(r.timestamp, query.dateFrom, query.dateTo))
+      : allRequests;
+    const toolUsage = hasDateFilter
+      ? allToolUsage.filter((t) => inDateRange(t.timestamp, query.dateFrom, query.dateTo))
+      : allToolUsage;
+
+    const kpis = hasDateFilter
+      ? {
+          totalInputTokens: sum(requests.map((r) => r.tokenBreakdown.inputTokens)),
+          totalOutputTokens: sum(requests.map((r) => r.tokenBreakdown.outputTokens)),
+          totalCacheCreationTokens: sum(requests.map((r) => r.tokenBreakdown.cacheCreationTokens)),
+          totalCacheReadTokens: sum(requests.map((r) => r.tokenBreakdown.cacheReadTokens)),
+          totalRequests: requests.length,
+          totalUserMessages: sum(sessions.map((session) => session.userMessageCount)),
+          totalAssistantTurns: requests.length,
+          uniqueTools: new Set(toolUsage.map((row) => row.toolName)).size,
+          totalSessions: sessions.length,
+          medianSessionCost: median(sessions.map((session) => totalForTokenTypes(breakdownForSession(session), selectedTokenTypes))),
+          medianSessionDuration: median(sessions.map((session) => session.durationSec)),
+        }
+      : {
+          totalInputTokens: sum(sessions.map((session) => breakdownForSession(session).inputTokens)),
+          totalOutputTokens: sum(sessions.map((session) => breakdownForSession(session).outputTokens)),
+          totalCacheCreationTokens: sum(sessions.map((session) => breakdownForSession(session).cacheCreationTokens)),
+          totalCacheReadTokens: sum(sessions.map((session) => breakdownForSession(session).cacheReadTokens)),
+          totalRequests: requests.length,
+          totalUserMessages: sum(sessions.map((session) => session.userMessageCount)),
+          totalAssistantTurns: sum(sessions.map((session) => session.assistantRequestCount)),
+          uniqueTools: new Set(toolUsage.map((row) => row.toolName)).size,
+          totalSessions: sessions.length,
+          medianSessionCost: median(sessions.map((session) => totalForTokenTypes(breakdownForSession(session), selectedTokenTypes))),
+          medianSessionDuration: median(sessions.map((session) => session.durationSec)),
+        };
 
     const tokenTrendMap = new Map<string, { label: string; breakdown: TokenBreakdown }>();
     const projectMixMap = new Map<string, TokenBreakdown>();
@@ -141,8 +163,8 @@ export class AnalyticsService {
       mergeTimeBreakdown(tokenTrendMap, bucket, request.tokenBreakdown);
     }
 
-    for (const session of sessions) {
-      mergeBreakdown(projectMixMap, session.project, breakdownForSession(session));
+    for (const request of requests) {
+      mergeBreakdown(projectMixMap, request.project, request.tokenBreakdown);
     }
 
     for (const request of requests) {
@@ -244,7 +266,7 @@ export class AnalyticsService {
     };
   }
 
-  getSessionRequests(sessionId: string, tokenMode: TokenMode): SessionRequestsPayload {
+  getSessionRequests(sessionId: string, tokenMode: TokenMode, dateFrom?: string, dateTo?: string): SessionRequestsPayload {
     const rows = this.database.db
       .prepare(
         `
@@ -292,6 +314,7 @@ export class AnalyticsService {
     return {
       items: rows
         .filter((row) => tokenMode === 'rolled_up' || !row.agentId)
+        .filter((row) => !dateFrom && !dateTo ? true : inDateRange(row.timestamp, dateFrom, dateTo))
         .map((row) => ({
           requestId: row.requestId ?? row.requestUid,
           sessionId: row.sessionId,
@@ -317,6 +340,9 @@ export class AnalyticsService {
 
   private filterSessions(query: SessionQuery): SessionSummary[] {
     const sessions = this.getSessionSummaries();
+    const activeSessionIds = (query.dateFrom || query.dateTo)
+      ? new Set(this.getSessionIdsWithActivityInRange(query.dateFrom, query.dateTo))
+      : null;
     return sessions.filter((session) => {
       const projectMatch = !query.projects?.length || query.projects.includes(session.project);
       const modelMatch = !query.models?.length || intersects(query.models, session.models);
@@ -329,9 +355,24 @@ export class AnalyticsService {
         session.sessionId.toLowerCase().includes(query.sessionSearch.toLowerCase()) ||
         session.project.toLowerCase().includes(query.sessionSearch.toLowerCase()) ||
         (session.cwd ?? '').toLowerCase().includes(query.sessionSearch.toLowerCase());
-      const dateMatch = inDateRange(session.startedAt, query.dateFrom, query.dateTo);
+      const dateMatch = activeSessionIds ? activeSessionIds.has(session.sessionId) : true;
       return projectMatch && modelMatch && versionMatch && branchMatch && toolMatch && sessionMatch && dateMatch;
     });
+  }
+
+  private getSessionIdsWithActivityInRange(dateFrom?: string, dateTo?: string): string[] {
+    let sql = `SELECT DISTINCT session_id FROM requests WHERE 1=1`;
+    const params: string[] = [];
+    if (dateFrom) {
+      sql += ` AND DATE(timestamp) >= ?`;
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      sql += ` AND DATE(timestamp) <= ?`;
+      params.push(dateTo);
+    }
+    const rows = this.database.db.prepare(sql).all(...params) as Array<{ session_id: string }>;
+    return rows.map((row) => row.session_id);
   }
 
   private getSessionSummaries(): Array<SessionSummary & { allToolNames: string[] }> {
@@ -398,6 +439,7 @@ export class AnalyticsService {
     if (sessionIds.length === 0) {
       return [] as Array<{
         sessionId: string;
+        project: string;
         timestamp: string | null;
         model: string | null;
         tokenBreakdown: TokenBreakdown;
@@ -408,17 +450,20 @@ export class AnalyticsService {
       .prepare(
         `
           SELECT
-            session_id AS sessionId,
-            agent_id AS agentId,
-            timestamp,
-            model,
-            input_tokens AS inputTokens,
-            output_tokens AS outputTokens,
-            cache_creation_tokens AS cacheCreationTokens,
-            cache_read_tokens AS cacheReadTokens,
-            total_tokens AS totalTokens
-          FROM requests
-          WHERE session_id IN (${placeholders})
+            r.session_id AS sessionId,
+            r.agent_id AS agentId,
+            r.timestamp,
+            r.model,
+            r.input_tokens AS inputTokens,
+            r.output_tokens AS outputTokens,
+            r.cache_creation_tokens AS cacheCreationTokens,
+            r.cache_read_tokens AS cacheReadTokens,
+            r.total_tokens AS totalTokens,
+            p.label AS project
+          FROM requests r
+          JOIN sessions s ON s.session_id = r.session_id
+          JOIN projects p ON p.project_key = s.project_key
+          WHERE r.session_id IN (${placeholders})
         `,
       )
       .all(...sessionIds) as Array<{
@@ -431,11 +476,13 @@ export class AnalyticsService {
       cacheCreationTokens: number;
       cacheReadTokens: number;
       totalTokens: number;
+      project: string;
     }>;
     return rows
       .filter((row) => tokenMode === 'rolled_up' || !row.agentId)
       .map((row) => ({
         sessionId: row.sessionId,
+        project: row.project,
         timestamp: row.timestamp,
         model: row.model,
         tokenBreakdown: {
@@ -450,18 +497,18 @@ export class AnalyticsService {
 
   private getToolUsageForSessions(sessionIds: string[], tokenMode: TokenMode) {
     if (sessionIds.length === 0) {
-      return [] as Array<{ sessionId: string; toolName: string }>;
+      return [] as Array<{ sessionId: string; toolName: string; timestamp: string | null }>;
     }
     const placeholders = sessionIds.map(() => '?').join(', ');
     const rows = this.database.db
       .prepare(
         `
-          SELECT session_id AS sessionId, agent_id AS agentId, tool_name AS toolName
+          SELECT session_id AS sessionId, agent_id AS agentId, tool_name AS toolName, timestamp
           FROM tool_calls
           WHERE session_id IN (${placeholders})
         `,
       )
-      .all(...sessionIds) as Array<{ sessionId: string; agentId: string | null; toolName: string }>;
+      .all(...sessionIds) as Array<{ sessionId: string; agentId: string | null; toolName: string; timestamp: string | null }>;
     return rows.filter((row) => tokenMode === 'rolled_up' || !row.agentId);
   }
 }

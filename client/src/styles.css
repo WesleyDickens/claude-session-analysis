@@ -309,6 +309,13 @@ code {
   gap: 4px;
 }
 
+.detail-date-filters {
+  display: flex;
+  gap: 12px;
+  padding: 0 var(--gutter, 32px);
+  max-width: 400px;
+}
+
 .detail-page .segmented-control {
   background: rgba(15, 118, 110, 0.08);
 }

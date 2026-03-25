@@ -44,7 +44,7 @@ export async function buildApp(options: AppOptions = {}) {
   app.get('/api/sessions/:id/requests', async (request) => {
     const params = request.params as { id: string };
     const query = parseSessionQuery(request.query as Record<string, unknown>);
-    return analytics.getSessionRequests(params.id, query.tokenMode ?? 'rolled_up');
+    return analytics.getSessionRequests(params.id, query.tokenMode ?? 'rolled_up', query.dateFrom, query.dateTo);
   });
 
   const clientDist = path.join(process.cwd(), 'dist', 'public');

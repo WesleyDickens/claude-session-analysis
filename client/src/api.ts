@@ -80,9 +80,14 @@ export const api = {
   getSessionDetail(sessionId: string): Promise<SessionDetailPayload> {
     return requestJson<SessionDetailPayload>(`/api/sessions/${sessionId}`);
   },
-  getSessionRequests(sessionId: string, tokenMode: SessionQuery['tokenMode']): Promise<SessionRequestsPayload> {
+  getSessionRequests(
+    sessionId: string,
+    tokenMode: SessionQuery['tokenMode'],
+    dateFrom?: string,
+    dateTo?: string,
+  ): Promise<SessionRequestsPayload> {
     return requestJson<SessionRequestsPayload>(
-      `/api/sessions/${sessionId}/requests${buildQuery({ tokenMode })}`,
+      `/api/sessions/${sessionId}/requests${buildQuery({ tokenMode, dateFrom, dateTo })}`,
     );
   },
 };
